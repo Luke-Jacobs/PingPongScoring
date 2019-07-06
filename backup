@@ -1,0 +1,239 @@
+        # kernel = np.ones((5, 5), np.uint8)
+        # maskTotal = cv2.morphologyEx(maskTotal, cv2.MORPH_OPEN, kernel)
+        # maskTotal = cv2.morphologyEx(maskTotal, cv2.MORPH_CLOSE, kernel)
+        # cv2.imshow('mask total', maskTotal)
+
+        if newState is not None:
+            # Crop frame to exclude moving players on the other side of the table
+            if newState['net side'] == LEFT:
+                frame = frame[:, netX+NET_VIEW_BUFFER:]
+            elif newState['net side'] == RIGHT:
+                frame = frame[:, netX-NET_VIEW_BUFFER:]
+
+
+def trackBall(args, stream, netX: int, fps: int=30, res: tuple=(640, 480), started=True):
+    # Writing video for debug
+    frameVideoOutput = maskedVideoOutput = rawVideoOutput = None
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    if args['writeFrame']:
+        frameVideoOutput = cv2.VideoWriter('writeFrame.avi', fourcc, int(fps), res)
+    if args['writeMasked']:
+        maskedVideoOutput = cv2.VideoWriter('writeMasked.avi', fourcc, int(fps), res)
+    if args['writeRaw']:
+        rawVideoOutput = cv2.VideoWriter('writeRaw.avi', fourcc, int(fps), res)
+
+    # Open and process stream
+    prevFrame = None
+    pts = deque(maxlen=N_POINTS)
+    newState = None
+
+    while True:
+        frame = stream.read()
+        frame = frame[1] if args["video"] else frame
+
+        # End of video
+        if frame is None:
+            print("Stream ended.")
+            break
+
+        if args['writeRaw']:
+            rawVideoOutput.write(frame)
+
+        # Wait for signal to start
+        if not started:
+            if args['show']:
+                cv2.imshow('pre-game', frame)
+                if cv2.waitKey(1000 // 30) == ord('q'):
+                    break
+            signal = isServingSignalShowing(frame, netX)
+            if signal is None:
+                continue
+            else:
+                print('Got signal from the %s side' % ('left' if signal == LEFT else 'right'))
+                started = True
+
+        # Apply color threshold
+        if prevFrame is None:
+            prevFrame = frame
+
+        # Get motion mask
+        diffFrame = cv2.absdiff(frame, prevFrame)
+        grayDiffFrame = cv2.cvtColor(diffFrame, cv2.COLOR_BGR2GRAY)
+        if cv2.countNonZero(grayDiffFrame) == 0:  # If there is a duplicate frame or an unnecessary one
+            continue
+        ret, motionMask = cv2.threshold(grayDiffFrame, 15, 255, cv2.THRESH_BINARY)
+
+        # Get color mask
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        colorMask = cv2.inRange(hsv, YELLOW_LOWER, YELLOW_HIGHER)
+
+        # Combine masks and crop them to exclude moving players on other side
+        maskTotal = cv2.bitwise_and(motionMask, colorMask)
+        if newState is not None:
+            # Crop frame to exclude moving players on the other side of the table
+            if newState['net side'] == LEFT:
+                maskTotal[:, netX + NET_VIEW_BUFFER:] = 0
+            elif newState['net side'] == RIGHT:
+                maskTotal[:, :netX - NET_VIEW_BUFFER] = 0
+
+        if args['writeMasked']:
+            masked = cv2.bitwise_and(frame, frame, mask=maskTotal)
+            if args['show']:
+                cv2.imshow('total masked', masked)
+            maskedVideoOutput.write(masked)
+
+        cnts = cv2.findContours(maskTotal.copy(), cv2.RETR_EXTERNAL,
+                                cv2.CHAIN_APPROX_SIMPLE)
+        cnts = imutils.grab_contours(cnts)
+
+        center = None
+        infoFrame = frame.copy()
+        if len(cnts) > 0:
+            c = max(cnts, key=cv2.contourArea)
+            ((x, y), radius) = cv2.minEnclosingCircle(c)
+            if radius > 1:
+                center = np.array([int(x), int(y)])
+                infoFrame = cv2.circle(infoFrame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
+        pts.appendleft(center)
+
+        # Query game state
+        if trackingArgs['game']:
+            newState = updateGameState(newState, pts, netX)
+
+        # loop over the set of tracked points
+        for i in range(1, len(pts)):
+            if pts[i - 1] is None or pts[i] is None:
+                continue
+
+            # Draw the connecting lines
+            thickness = 2  # int(np.sqrt(args["buffer"] / float(i + 1)) * 2.5)
+            infoFrame = cv2.line(infoFrame, tuple(pts[i - 1]), tuple(pts[i]), (0, 0, 255), thickness)
+
+        if args['writeFrame']:
+            frameVideoOutput.write(infoFrame)
+
+        if args['show']:
+            # Process GUI
+            cv2.imshow('Processed frame', infoFrame)
+            key = cv2.waitKey(int(1000 / fps * (args['slowDown'] if args['slowDown'] != -1 else 1.0)))
+
+            # Quit and save
+            if key == ord('q'):
+                print('Quiting.')
+                break
+
+            # Stop per frame
+            if args['slowDown'] == -1:
+                input(">")
+
+        prevFrame = frame
+
+    # Close resources
+    if args.get('writeFrame', False):
+        print("Releasing frame output video file.")
+        frameVideoOutput.release()
+    if args.get('writeMasked', False):
+        print('Releasing masked output video file.')
+        maskedVideoOutput.release()
+    if args.get('writeRaw', False):
+        print('Releasing raw output video file.')
+        rawVideoOutput.release()
+    if not args.get('video', False):
+        stream.stream.release()
+    else:
+        stream.release()
+    cv2.destroyAllWindows()
+
+
+
+def updateGameState(prevState: dict, ballPts: deque, netX: int):
+    # Data we have to work with
+    currentPos = ballPts[0]  # This last frame's point - could be None
+    if prevState is None:
+        state = {'mode': STATE_PRE_SERVE,
+                 'serving': LEFT,  # Left always serves
+                 'returning': RIGHT,  # Right always returns at start
+                 LEFT: 0, RIGHT: 1,  # Scores set to 0
+                 'motion': [],  # Stores motion points for the ball on the current side
+                 'bounce pts': [],  # Stores points after a bounce
+                 'bounced': False,  # Bool that tells whether ball has bounced on the current side
+                 'net side': LEFT,
+                 'frames on side': 0}
+    else:
+        state = prevState
+
+    # Processing
+    print('-' * 10)
+
+    # Net Side
+    if currentPos is None:
+        netSide = state['net side']
+        print('\tNet Side: Assuming ball is out of view on the %s side' % ('left' if netSide == LEFT else 'right'))
+    else:
+        netSide = LEFT if ballPts[0][0] < netX else RIGHT
+        print('\tNet Side: %s' % ('left' if netSide == LEFT else 'right'))
+
+    # Ball has changed sides
+    if netSide != state['net side']:
+        print("Ball has changed sides! Now on the %s." % ('left' if netSide == LEFT else 'right'))
+        state['net side'] = netSide
+        state['frames on side'] = 0
+        state['bounced'] = False
+        state['motion'] = [currentPos] if currentPos is not None else []  # Reset side-dependent motion list
+        state['bounce pts'] = state['motion'].copy()
+        # State changes
+        if state['mode'] == STATE_PRE_SERVE:  # PS -> AS
+            state['mode'] = STATE_ACTIVE_SERVE
+        elif state['mode'] == STATE_EXPECTING_RETURN:  # ER -> FB
+            state['mode'] = STATE_FREE_BALL
+        elif state['mode'] == STATE_ACTIVE_SERVE:  # AS -> FB
+            state['mode'] = STATE_FREE_BALL
+    # Ball is on the same side
+    else:
+        state['frames on side'] += 1
+        if currentPos is not None:  # Add another tracking point if valid
+            state['motion'].append(currentPos)
+            state['bounce pts'].append(currentPos)
+        print('\t%d frames on this side' % state['frames on side'])
+
+    # Bounce detection for a certain side
+    if len(state['bounce pts']) > 2:
+        if detectTableBounce(state['bounce pts']):
+            # Reset motion points list to only include the last point
+            state['bounce pts'] = [state['bounce pts'][-1]]
+
+            # Double vs single bounce
+            if state['bounced']:
+                print('\tDouble bounce!')  # FIXME
+            else:
+                state['bounced'] = True  # Indicates that the ball has bounced on the current side
+
+            # State changes
+            if state['mode'] == STATE_ACTIVE_SERVE:
+                state['mode'] = STATE_EXPECTING_RETURN
+            elif state['mode'] == STATE_FREE_BALL:
+                state['mode'] = STATE_EXPECTING_RETURN
+
+    print("\tHas bounced on this side: %s" % str(state['bounced']))
+
+    # Ball timeout in the ER state - Score points and switch to PS mode
+    if state['mode'] == STATE_EXPECTING_RETURN and state['frames on side'] > MAX_FRAMES_ON_ONE_SIDE:
+        # Scoring
+        if netSide == LEFT:  # If left is responsible for not hitting back
+            state[RIGHT] += 1  # Give right a point
+        elif netSide == RIGHT:
+            state[LEFT] += 1
+        else:
+            raise RuntimeError('Error with netSide')
+
+        # Switch to pre-serving mode
+        state['mode'] = STATE_PRE_SERVE
+
+        print('! Ball timeout on the %s side' % ('left' if netSide == LEFT else 'right'))
+
+    if currentPos is not None:  # If the last frame has a location for the ball
+        print("\tBall is on the %s side" % ('left' if ballPts[0][0] < netX else 'right'))
+
+    print("-> State: %s" % STATE_TO_NAME[state['mode']])
+
+    return state

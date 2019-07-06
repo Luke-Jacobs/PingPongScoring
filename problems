@@ -1,0 +1,8 @@
+- PS transitions into ER before the serve is hit
+- Acceptable: If serve does a double bounce on the serving side or hits the net, the second try logic isn't triggered
+- Need scoring
+
+FB -> ER
+    Player noise confused as a bounce
+
+- The camera can pick up player's faces as the ball and it thinks the ball has bounced (albeit very fast upwards)
