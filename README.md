@@ -1,5 +1,7 @@
 # PingPongScoring Overview
-This script follows a game of ping pong by using computer vision techniques and a state machine. Here is an overview of the contained files:
+This script follows a game of ping pong by using computer vision techniques and a state machine. 
+
+Here is an overview of the contained files:
 
 ### Project Structure
 
