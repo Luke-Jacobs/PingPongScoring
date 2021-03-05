@@ -1,5 +1,7 @@
 # PingPongScoring Overview
-This script follows a game of ping pong by using computer vision techniques and a state machine. 
+This script follows a game of ping pong by using computer vision techniques and a state machine. This project was inspired by my curiosity of how accurately a computer algorithm could score a ping pong game - I wanted to make a proof-of-concept. (Oh the things one thinks about while bored at home!) The steps of the project were to 1) identify the ball 2) pinpoint the ball's location and 3) track the game mechanics. 
+
+To start on identifying the ball, I knew my best bet was to use the distinct hue of the neon yellow ball as the ball's identifying factor. I grabbed my laptop, webcam, and camera tripod and started collecting footage of me hitting 
 
 Here is an overview of the contained files:
 
