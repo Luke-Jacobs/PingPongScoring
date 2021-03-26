@@ -11,6 +11,6 @@ Here is an overview of the contained files:
 - *Game.py* - Contains the game state machine and the conditions for transitioning between states. Probabilistic logic is done in this file to account for some uncertainty with the ball's position.
 - *Ball.py* - Contains OpenCV and Numpy code to update the location of the ball (x and y coordinates on screen) given a new frame from the video stream. Most OpenCV code is found here.
 
-## Location Guessing
+## Example Tracking GIF
 
-Although the ping pong ball that I used was neon yellow, when the ball is hit fast, my webcam only picks up a long blur of yellow for certain frames.
+![Ball Tracking](https://im3.ezgif.com/tmp/ezgif-3-624e790ff253.gif)
