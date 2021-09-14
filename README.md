@@ -13,4 +13,4 @@ Here is an overview of the contained files:
 
 ## Screenshot of user display
 
-![Ball Tracking](ping pong screenshot.png)
+![Ball Tracking](ping_pong_screenshot.png)
